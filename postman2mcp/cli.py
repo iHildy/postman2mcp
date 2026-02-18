@@ -63,7 +63,7 @@ def main(collection_id, org_content_url, project_dir, postman_api_key, ngrok_aut
     openapi_spec, base_url = convert_to_openapi(primary_collection)
 
     # Step 3: Generate project files
-    generate_project_files(project_dir, primary_collection, openapi_spec, base_url, postman_api_key, ngrok_authtoken=None)
+    generate_project_files(project_dir, primary_collection, openapi_spec, base_url, postman_api_key, ngrok_authtoken=ngrok_authtoken)
     click.echo(f"Project files generated in {project_dir}")
 
 if __name__ == '__main__':

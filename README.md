@@ -63,8 +63,7 @@ The CLI provides a simple interface to generate a FastAPI+MCP project from a Pos
 ### Command Syntax & Arguments
 
 ```sh
-postman2mcp --collection-id <POSTMAN_COLLECTION_ID> \
-            --org-content-url <POSTMAN_ORG_OVERVIEW_URL> \
+postman2mcp (--collection-id <POSTMAN_COLLECTION_ID> | --org-content-url <POSTMAN_ORG_OVERVIEW_URL>) \
             --project-dir <PROJECT_DIR> \
             --postman-api-key <POSTMAN_API_KEY> \
             --ngrok-authtoken <NGROK_AUTHTOKEN>
