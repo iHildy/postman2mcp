@@ -1,4 +1,4 @@
-# my_mcp_tool/cli.py
+# postman2mcp/cli.py
 import os
 import json
 
@@ -34,7 +34,12 @@ def _select_collection_ids(collection_id, org_content_url):
 
 
 def _get_primary_collection(selected_collection_ids, postman_api_key):
-    harvested_collections = [harvest_postman_collection(selected_id, postman_api_key) for selected_id in selected_collection_ids]
+    harvested_collections = []
+    for selected_id in selected_collection_ids:
+        try:
+            harvested_collections.append(harvest_postman_collection(selected_id, postman_api_key))
+        except Exception as exc:
+            raise click.ClickException(f"Failed to harvest Postman collection '{selected_id}': {exc}") from exc
     primary_collection = harvested_collections[0]
     if len(harvested_collections) > 1:
         merged_items = []

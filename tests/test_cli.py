@@ -33,7 +33,7 @@ SAMPLE_COLLECTION = {
 }
 
 
-class OpenApiCliTests(unittest.TestCase):
+class OpenAPICliTests(unittest.TestCase):
     def test_openapi_command_writes_only_openapi_file(self):
         runner = CliRunner()
 
@@ -52,7 +52,7 @@ class OpenApiCliTests(unittest.TestCase):
 
             self.assertEqual(result.exit_code, 0, result.output)
             self.assertIn("OpenAPI spec written to", result.output)
-            self.assertTrue(mock_generate_project_files.call_count == 0)
+            self.assertEqual(mock_generate_project_files.call_count, 0)
 
             with open(output_file, "r", encoding="utf-8") as f:
                 openapi_spec = json.load(f)
