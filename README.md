@@ -63,7 +63,7 @@ The CLI provides a simple interface to generate a FastAPI+MCP project from a Pos
 ### Command Syntax & Arguments
 
 ```sh
-postman2mcp --collection-id <POSTMAN_COLLECTION_ID> \
+postman2mcp (--collection-id <POSTMAN_COLLECTION_ID> | --org-content-url <POSTMAN_ORG_OVERVIEW_URL>) \
             --project-dir <PROJECT_DIR> \
             --postman-api-key <POSTMAN_API_KEY> \
             --ngrok-authtoken <NGROK_AUTHTOKEN>
@@ -71,8 +71,10 @@ postman2mcp --collection-id <POSTMAN_COLLECTION_ID> \
 
 **Arguments:**
 
-- `--collection-id` (required):  
-  The unique ID of your Postman collection.  
+- `--collection-id` (optional, required if `--org-content-url` is not set):  
+  The unique ID of your Postman collection.
+- `--org-content-url` (optional, required if `--collection-id` is not set):  
+  A Postman org/workspace overview URL (for example `https://www.postman.com/zendesk-redback/zendesk-public-api/overview`). The CLI discovers collections from this page and asks you which ones to merge into one MCP.
 - `--project-dir` (optional, default: `my-mcp-project`):  
   Directory where the project will be generated.
 - `--postman-api-key` (required):  
