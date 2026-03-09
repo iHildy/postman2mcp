@@ -11,6 +11,7 @@
 - Providing scripts for local development and public exposure via Ngrok.
 
 This tool is ideal for quickly scaffolding an MCP-compatible API proxy from any Postman collection.
+It also includes a `postman2openapi` command when you only need the converted OpenAPI spec file.
 
 ---
 
@@ -58,7 +59,10 @@ This tool is ideal for quickly scaffolding an MCP-compatible API proxy from any 
 
 ## Usage
 
-The CLI provides a simple interface to generate a FastAPI+MCP project from a Postman collection.
+The CLI provides:
+
+- `postman2mcp` to generate a FastAPI+MCP project from a Postman collection
+- `postman2openapi` to write only the converted OpenAPI 3.1 spec to a file
 
 ### Command Syntax & Arguments
 
@@ -67,6 +71,12 @@ postman2mcp (--collection-id <POSTMAN_COLLECTION_ID> | --org-content-url <POSTMA
             --project-dir <PROJECT_DIR> \
             --postman-api-key <POSTMAN_API_KEY> \
             --ngrok-authtoken <NGROK_AUTHTOKEN>
+```
+
+```sh
+postman2openapi (--collection-id <POSTMAN_COLLECTION_ID> | --org-content-url <POSTMAN_ORG_OVERVIEW_URL>) \
+                --output-file <OPENAPI_FILE> \
+                --postman-api-key <POSTMAN_API_KEY>
 ```
 
 **Arguments:**
@@ -81,6 +91,8 @@ postman2mcp (--collection-id <POSTMAN_COLLECTION_ID> | --org-content-url <POSTMA
   Your Postman API key (see below for how to obtain).
 - `--ngrok-authtoken` (optional):  
   Your Ngrok authentication token (see below for how to obtain).
+- `--output-file` (optional, default: `openapi.json`):  
+  File path written by `postman2openapi`.
 
 ---
 
@@ -132,6 +144,12 @@ postman2mcp --collection-id bbeb2a4c-e6ce-413f-933c-74588bba332b \
             --project-dir my-mcp-project \
             --postman-api-key PMAK-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
             --ngrok-authtoken 2Nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+```sh
+postman2openapi --collection-id bbeb2a4c-e6ce-413f-933c-74588bba332b \
+                --output-file ./openapi.json \
+                --postman-api-key PMAK-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 Then navigate to your project directory:
