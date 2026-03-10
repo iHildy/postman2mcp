@@ -29,11 +29,23 @@ def infer_type_from_value(value: str) -> str:
         return "string"
 
 
-def extract_path(url_obj: Dict) -> str:
+def extract_path(url_obj: Dict) -> Tuple[str, List[Dict]]:
     segments = url_obj.get("path", [])
-    if "{id}" in segments:
-        return "/" + "/".join(segments)
-    return "/" + "/".join(segments)
+    path_parts = []
+    path_params = []
+    for segment in segments:
+        if segment.startswith(":"):
+            param_name = segment[1:]
+            path_parts.append(f"{{{param_name}}}")
+            path_params.append({
+                "name": param_name,
+                "in": "path",
+                "required": True,
+                "schema": {"type": "string"}
+            })
+        else:
+            path_parts.append(segment)
+    return "/" + "/".join(path_parts), path_params
 
 def extract_request_body(request: Dict) -> Dict:
     body_obj = request.get("body")
@@ -171,8 +183,8 @@ def convert_to_openapi(postman_collection) -> Tuple[dict, str]:
 
                 method = request.get("method", "GET").lower()
                 url_obj = request.get("url", {})
-                path = extract_path(url_obj)
-                parameters = extract_query_parameters(url_obj)
+                path, path_params = extract_path(url_obj)
+                parameters = path_params + extract_query_parameters(url_obj)
                 request_body = extract_request_body(request)
                 summary = item.get("name", f"{method.upper()} {path}")
                 description = request.get("description", "")
