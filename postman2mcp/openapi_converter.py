@@ -1,7 +1,7 @@
 import json
 import re
 from urllib.parse import urlparse, parse_qs
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple, Any, Optional
 
 def slugify(text: str) -> str:
     """Convert text to a valid operationId slug."""
@@ -24,13 +24,41 @@ def generate_schema_from_example(data: Any) -> Dict:
     if isinstance(data, list):
         if not data:
             return {"type": "array", "items": {}}
-        return {"type": "array", "items": generate_schema_from_example(data[0])}
+        # Merge schemas of all items in the list if possible, or just use the first one
+        item_schema = {}
+        if len(data) > 0:
+            item_schema = generate_schema_from_example(data[0])
+        return {"type": "array", "items": item_schema}
     if isinstance(data, dict):
         properties = {}
         for key, value in data.items():
             properties[key] = generate_schema_from_example(value)
         return {"type": "object", "properties": properties}
     return {"type": "string"}
+
+def merge_schemas(s1: Dict, s2: Dict) -> Dict:
+    """Simple deep merge of two OpenAPI schemas."""
+    if not s1: return s2
+    if not s2: return s1
+    if s1.get("type") != s2.get("type"):
+        return s1 # Conflict, keep first
+    
+    if s1.get("type") == "object":
+        p1 = s1.get("properties", {})
+        p2 = s2.get("properties", {})
+        merged_props = {}
+        all_keys = set(p1.keys()) | set(p2.keys())
+        for k in all_keys:
+            merged_props[k] = merge_schemas(p1.get(k, {}), p2.get(k, {}))
+        return {"type": "object", "properties": merged_props}
+    
+    if s1.get("type") == "array":
+        return {
+            "type": "array",
+            "items": merge_schemas(s1.get("items", {}), s2.get("items", {}))
+        }
+    
+    return s1
 
 def extract_query_parameters(url_obj: Dict) -> List[Dict]:
     return [
@@ -77,101 +105,131 @@ def extract_path(url_obj: Dict) -> Tuple[str, List[Dict]]:
             path_parts.append(segment)
     return "/" + "/".join(path_parts), path_params
 
-def extract_request_body(request: Dict) -> Dict:
+def extract_request_body(request: Dict, responses: Optional[List[Dict]] = None) -> Dict:
+    """
+    Extract request body from main request and also check examples if necessary.
+    """
+    if responses is None:
+        responses = []
+    # Try the main request body first
     body_obj = request.get("body")
-    if not body_obj:
-        return {}
-    
-    mode = body_obj.get("mode")
-    if not mode:
-        return {}
-    
-    content = {}
-    if mode == "raw":
-        raw_data = body_obj.get("raw", "")
-        # Try to infer language if available
-        language = body_obj.get("options", {}).get("raw", {}).get("language", "json")
-        media_type = f"application/{language}" if language == "json" else "text/plain"
-        
-        schema = {"type": "string"}
-        example = raw_data
-        if language == "json":
-            try:
-                example = json.loads(raw_data)
-                schema = generate_schema_from_example(example)
-            except:
-                schema = {"type": "object"}
-        
-        content[media_type] = {
-            "schema": schema,
-            "example": example
-        }
-    elif mode == "urlencoded":
-        params = body_obj.get("urlencoded", [])
-        properties = {}
-        for p in params:
-            if p.get("key"):
-                properties[p["key"]] = {
-                    "type": "string",
-                    "description": p.get("description", ""),
-                    "default": p.get("value", "")
-                }
-        content["application/x-www-form-urlencoded"] = {
-            "schema": {
-                "type": "object",
-                "properties": properties
+    primary_content = {}
+    if body_obj:
+        mode = body_obj.get("mode")
+        if mode == "raw":
+            raw_data = body_obj.get("raw", "")
+            language = body_obj.get("options", {}).get("raw", {}).get("language", "json")
+            media_type = f"application/{language}" if language == "json" else "text/plain"
+            
+            schema = {"type": "string"}
+            example = raw_data
+            if language == "json":
+                try:
+                    example = json.loads(raw_data)
+                    schema = generate_schema_from_example(example)
+                except:
+                    schema = {"type": "object"}
+            
+            primary_content[media_type] = {
+                "schema": schema,
+                "example": example
             }
-        }
-    elif mode == "formdata":
-        params = body_obj.get("formdata", [])
-        properties = {}
-        for p in params:
-            if p.get("key"):
-                p_type = p.get("type", "text")
-                properties[p["key"]] = {
-                    "type": "string",
-                    "description": p.get("description", ""),
+        elif mode == "urlencoded":
+            params = body_obj.get("urlencoded", [])
+            properties = {}
+            for p in params:
+                if p.get("key"):
+                    properties[p["key"]] = {
+                        "type": "string",
+                        "description": p.get("description", ""),
+                        "default": p.get("value", "")
+                    }
+            primary_content["application/x-www-form-urlencoded"] = {
+                "schema": {
+                    "type": "object",
+                    "properties": properties
                 }
-                if p_type == "file":
-                    properties[p["key"]]["format"] = "binary"
-                else:
-                    properties[p["key"]]["default"] = p.get("value", "")
+            }
+        elif mode == "formdata":
+            params = body_obj.get("formdata", [])
+            properties = {}
+            for p in params:
+                if p.get("key"):
+                    p_type = p.get("type", "text")
+                    properties[p["key"]] = {
+                        "type": "string",
+                        "description": p.get("description", ""),
+                    }
+                    if p_type == "file":
+                        properties[p["key"]]["format"] = "binary"
+                    else:
+                        properties[p["key"]]["default"] = p.get("value", "")
+                        
+            primary_content["multipart/form-data"] = {
+                "schema": {
+                    "type": "object",
+                    "properties": properties
+                }
+            }
+
+    # If the main body is lacking or simple, scan examples for better schemas/examples
+    if responses:
+        for resp in responses:
+            orig_req = resp.get("originalRequest", {})
+            orig_body = orig_req.get("body", {})
+            if orig_body.get("mode") == "raw" and orig_body.get("raw"):
+                raw_data = orig_body["raw"]
+                try:
+                    body_val = json.loads(raw_data)
+                    new_schema = generate_schema_from_example(body_val)
+                    media_type = "application/json"
                     
-        content["multipart/form-data"] = {
-            "schema": {
-                "type": "object",
-                "properties": properties
-            }
-        }
-        
-    if content:
-        return {"content": content, "required": True}
+                    if media_type not in primary_content:
+                        primary_content[media_type] = {
+                            "schema": new_schema,
+                            "examples": {}
+                        }
+                    
+                    # Merge schemas if it was just a generic object
+                    if primary_content[media_type]["schema"].get("type") == "object" and \
+                       not primary_content[media_type]["schema"].get("properties"):
+                        primary_content[media_type]["schema"] = new_schema
+                    else:
+                        primary_content[media_type]["schema"] = merge_schemas(primary_content[media_type]["schema"], new_schema)
+                    
+                    # Store as a named example in the requestBody
+                    if "examples" not in primary_content[media_type]:
+                        primary_content[media_type]["examples"] = {}
+                    
+                    ex_name = slugify(resp.get("name", "example"))
+                    primary_content[media_type]["examples"][ex_name] = {
+                        "summary": resp.get("name", ""),
+                        "value": body_val
+                    }
+                    
+                except:
+                    pass
+
+    if primary_content:
+        return {"content": primary_content, "required": True}
     return {}
 
 def extract_examples(responses: List[Dict]) -> Dict:
     examples = {}
     for i, resp in enumerate(responses):
-        req = resp.get("originalRequest", {})
-        url_obj = req.get("url", {})
-        query_list = url_obj.get("query", [])
-        query_dict = {
-            param["key"]: param.get("value", "")
-            for param in query_list if param.get("key")
-        }
-        
-        # Check for body example in response originalRequest
-        body_obj = req.get("body", {})
-        if body_obj.get("mode") == "raw" and body_obj.get("raw"):
-            try:
-                body_val = json.loads(body_obj["raw"])
-                query_dict["request_body"] = body_val
-            except:
-                pass
-
+        # Focus on response examples only
+        res_body = resp.get("body", "")
         summary = resp.get("name", f"example_{i+1}")
+        
+        # In Postman, response body can be raw
+        try:
+            res_val = json.loads(res_body)
+        except:
+            res_val = res_body
+            
         examples[f"example_{i+1}"] = {
             "summary": summary,
-            "value": query_dict
+            "value": res_val
         }
     return examples
 
@@ -208,14 +266,14 @@ def convert_to_openapi(postman_collection) -> Tuple[dict, str]:
         "info": {
             "title": postman["collection"]["info"]["name"],
             "version": "1.0.0",
-            "description": postman["collection"]["info"]["description"]
+            "description": postman["collection"]["info"].get("description", "")
         },
         "paths": {}
     }
 
+    used_operation_ids = set()
+
     def process_items(items: List[Dict]):
-        used_operation_ids = set()
-        
         for item in items:
             if "item" in item:
                 process_items(item["item"])  # Recurse into folders
@@ -228,7 +286,9 @@ def convert_to_openapi(postman_collection) -> Tuple[dict, str]:
                 url_obj = request.get("url", {})
                 path, path_params = extract_path(url_obj)
                 parameters = path_params + extract_query_parameters(url_obj)
-                request_body = extract_request_body(request)
+                
+                resp_list = item.get("response", [])
+                request_body = extract_request_body(request, resp_list)
                 summary = item.get("name", f"{method.upper()} {path}")
                 description = request.get("description", "")
                 
@@ -240,17 +300,24 @@ def convert_to_openapi(postman_collection) -> Tuple[dict, str]:
                     counter += 1
                 used_operation_ids.add(op_id)
 
-                examples = extract_examples(item.get("response", []))
+                examples = extract_examples(resp_list)
 
                 if path not in openapi["paths"]:
                     openapi["paths"][path] = {}
                 
+                # Merge schemas from all response examples for the response schema
+                resp_schema = {"type": "object"}
+                for ex in examples.values():
+                    ex_val = ex.get("value")
+                    if ex_val:
+                        resp_schema = merge_schemas(resp_schema, generate_schema_from_example(ex_val))
+
                 responses_obj = {
                     "200": {
                         "description": "Successful response",
                         "content": {
                             "application/json": {
-                                "schema": {"type": "object"}
+                                "schema": resp_schema
                             }
                         }
                     }
@@ -258,10 +325,6 @@ def convert_to_openapi(postman_collection) -> Tuple[dict, str]:
                 
                 if examples:
                     responses_obj["200"]["content"]["application/json"]["examples"] = examples
-                    # Try to generate a more descriptive schema from the first example
-                    first_example_val = list(examples.values())[0].get("value")
-                    if first_example_val:
-                        responses_obj["200"]["content"]["application/json"]["schema"] = generate_schema_from_example(first_example_val)
 
                 operation_obj = {
                     "operationId": op_id,
