@@ -6,19 +6,19 @@ import click
 
 from .file_generator import generate_project_files
 from .openapi_converter import convert_to_openapi
-from .postman_harvester import discover_collections_from_org_content, harvest_postman_collection
+from .postman_harvester import list_collections_in_workspace, harvest_postman_collection
 
 
-def _select_collection_ids(collection_id, org_content_url):
-    if not collection_id and not org_content_url:
-        raise click.UsageError("Provide either --collection-id or --org-content-url.")
-    if collection_id and org_content_url:
-        raise click.UsageError("Use only one of --collection-id or --org-content-url.")
+def _select_collection_ids(collection_id, workspace_id, postman_api_key):
+    if not collection_id and not workspace_id:
+        raise click.UsageError("Provide either --collection-id or --workspace-id.")
+    if collection_id and workspace_id:
+        raise click.UsageError("Use only one of --collection-id or --workspace-id.")
 
     selected_collection_ids = [collection_id] if collection_id else []
-    if org_content_url:
-        available_collections = discover_collections_from_org_content(org_content_url)
-        click.echo("Collections found:")
+    if workspace_id:
+        available_collections = list_collections_in_workspace(workspace_id, postman_api_key)
+        click.echo("Collections found in workspace:")
         for idx, collection in enumerate(available_collections, start=1):
             click.echo(f"{idx}. {collection['name']} ({collection['id']})")
         selection = click.prompt("Select collections by number (comma-separated) or type 'all'", default="all")
@@ -61,8 +61,8 @@ def _get_primary_collection(selected_collection_ids, postman_api_key):
     return primary_collection
 
 
-def _build_openapi_spec(collection_id, org_content_url, postman_api_key):
-    selected_collection_ids = _select_collection_ids(collection_id, org_content_url)
+def _build_openapi_spec(collection_id, workspace_id, postman_api_key):
+    selected_collection_ids = _select_collection_ids(collection_id, workspace_id, postman_api_key)
     primary_collection = _get_primary_collection(selected_collection_ids, postman_api_key)
     openapi_spec, base_url = convert_to_openapi(primary_collection)
     return primary_collection, openapi_spec, base_url
@@ -79,17 +79,17 @@ def _write_openapi_spec(output_file, openapi_spec):
 
 @click.command()
 @click.option('--collection-id', required=False, help='Postman collection ID')
-@click.option('--org-content-url', required=False, help='Postman org/workspace overview URL')
+@click.option('--workspace-id', required=False, help='Postman workspace ID')
 @click.option('--project-dir', default='my-mcp-project', help='Directory to create the project in')
 @click.option('--postman-api-key', required=True, help='Postman API key')
 @click.option('--ngrok-authtoken', required=False, help='Ngrok authentication token')
-def main(collection_id, org_content_url, project_dir, postman_api_key, ngrok_authtoken):
+def main(collection_id, workspace_id, project_dir, postman_api_key, ngrok_authtoken):
     # Ensure the project directory exists
     project_dir = os.path.abspath(project_dir)
     if not os.path.exists(project_dir):
         os.makedirs(project_dir)
 
-    primary_collection, openapi_spec, base_url = _build_openapi_spec(collection_id, org_content_url, postman_api_key)
+    primary_collection, openapi_spec, base_url = _build_openapi_spec(collection_id, workspace_id, postman_api_key)
 
     # Step 3: Generate project files
     generate_project_files(project_dir, primary_collection, openapi_spec, base_url, postman_api_key, ngrok_authtoken=ngrok_authtoken)
@@ -98,11 +98,11 @@ def main(collection_id, org_content_url, project_dir, postman_api_key, ngrok_aut
 
 @click.command()
 @click.option('--collection-id', required=False, help='Postman collection ID')
-@click.option('--org-content-url', required=False, help='Postman org/workspace overview URL')
+@click.option('--workspace-id', required=False, help='Postman workspace ID')
 @click.option('--output-file', default='openapi.json', help='OpenAPI spec file to create')
 @click.option('--postman-api-key', required=True, help='Postman API key')
-def openapi_main(collection_id, org_content_url, output_file, postman_api_key):
-    _, openapi_spec, _ = _build_openapi_spec(collection_id, org_content_url, postman_api_key)
+def openapi_main(collection_id, workspace_id, output_file, postman_api_key):
+    _, openapi_spec, _ = _build_openapi_spec(collection_id, workspace_id, postman_api_key)
     output_file = _write_openapi_spec(output_file, openapi_spec)
     click.echo(f"OpenAPI spec written to {output_file}")
 
