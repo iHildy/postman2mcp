@@ -22,7 +22,8 @@ setup(
     include_package_data=True,
     entry_points={
         "console_scripts": [
-            "postman2mcp=postman2mcp.cli:main"
+            "postman2mcp=postman2mcp.cli:main",
+            "postman2openapi=postman2mcp.cli:openapi_main",
         ]
     },
     license="MIT",

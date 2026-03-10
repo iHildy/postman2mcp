@@ -1,5 +1,4 @@
 import requests
-import re
 
 
 def harvest_postman_collection(collection_id, postman_api_key):
@@ -15,25 +14,22 @@ def harvest_postman_collection(collection_id, postman_api_key):
     return response.json()
 
 
-def discover_collections_from_org_content(org_content_url):
-    response = requests.get(org_content_url, timeout=30)
+def list_collections_in_workspace(workspace_id, postman_api_key):
+    url = f"https://api.getpostman.com/collections?workspace={workspace_id}"
+    headers = {
+        "X-Api-Key": postman_api_key
+    }
+    response = requests.get(url, headers=headers)
     if response.status_code != 200:
-        raise RuntimeError(f"Failed to fetch org content URL: {response.status_code} {response.text}")
-
-    matches = re.findall(r"https://www\.postman\.com/[^\"'\\s]+/collection/([A-Za-z0-9-]+)/([A-Za-z0-9-]+)", response.text)
-    matches.extend(re.findall(r"/[^\"'\\s]+/collection/([A-Za-z0-9-]+)/([A-Za-z0-9-]+)", response.text))
-
+        raise RuntimeError(f"Failed to fetch collections from workspace: {response.status_code} {response.text}")
+    
     collections = []
-    seen = set()
-    for collection_id, slug in matches:
-        if collection_id in seen:
-            continue
-        seen.add(collection_id)
+    for c in response.json().get("collections", []):
         collections.append({
-            "id": collection_id,
-            "name": slug.replace("-", " "),
+            "id": c.get("uid", c["id"]),
+            "name": c["name"]
         })
-
+    
     if not collections:
-        raise RuntimeError("No collections found in the provided Postman org content URL.")
+        raise RuntimeError("No collections found in the provided Postman workspace ID.")
     return collections

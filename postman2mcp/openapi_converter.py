@@ -35,6 +35,76 @@ def extract_path(url_obj: Dict) -> str:
         return "/" + "/".join(segments)
     return "/" + "/".join(segments)
 
+def extract_request_body(request: Dict) -> Dict:
+    body_obj = request.get("body")
+    if not body_obj:
+        return {}
+    
+    mode = body_obj.get("mode")
+    if not mode:
+        return {}
+    
+    content = {}
+    if mode == "raw":
+        raw_data = body_obj.get("raw", "")
+        # Try to infer language if available
+        language = body_obj.get("options", {}).get("raw", {}).get("language", "json")
+        media_type = f"application/{language}" if language == "json" else "text/plain"
+        
+        # Simple schema, use the raw data as an example
+        example = raw_data
+        if language == "json":
+            try:
+                example = json.loads(raw_data)
+            except:
+                pass
+        
+        content[media_type] = {
+            "schema": {"type": "object"} if language == "json" else {"type": "string"},
+            "example": example
+        }
+    elif mode == "urlencoded":
+        params = body_obj.get("urlencoded", [])
+        properties = {}
+        for p in params:
+            if p.get("key"):
+                properties[p["key"]] = {
+                    "type": "string",
+                    "description": p.get("description", ""),
+                    "default": p.get("value", "")
+                }
+        content["application/x-www-form-urlencoded"] = {
+            "schema": {
+                "type": "object",
+                "properties": properties
+            }
+        }
+    elif mode == "formdata":
+        params = body_obj.get("formdata", [])
+        properties = {}
+        for p in params:
+            if p.get("key"):
+                p_type = p.get("type", "text")
+                properties[p["key"]] = {
+                    "type": "string",
+                    "description": p.get("description", ""),
+                }
+                if p_type == "file":
+                    properties[p["key"]]["format"] = "binary"
+                else:
+                    properties[p["key"]]["default"] = p.get("value", "")
+                    
+        content["multipart/form-data"] = {
+            "schema": {
+                "type": "object",
+                "properties": properties
+            }
+        }
+        
+    if content:
+        return {"content": content, "required": True}
+    return {}
+
 def extract_examples(responses: List[Dict]) -> Dict:
     examples = {}
     for i, resp in enumerate(responses):
@@ -103,6 +173,7 @@ def convert_to_openapi(postman_collection) -> Tuple[dict, str]:
                 url_obj = request.get("url", {})
                 path = extract_path(url_obj)
                 parameters = extract_query_parameters(url_obj)
+                request_body = extract_request_body(request)
                 summary = item.get("name", f"{method.upper()} {path}")
                 description = request.get("description", "")
 
@@ -110,7 +181,7 @@ def convert_to_openapi(postman_collection) -> Tuple[dict, str]:
 
                 if path not in openapi["paths"]:
                     openapi["paths"][path] = {}
-                openapi["paths"][path][method] = {
+                operation_obj = {
                     "summary": summary,
                     "description": description,
                     "parameters": parameters,
@@ -130,6 +201,9 @@ def convert_to_openapi(postman_collection) -> Tuple[dict, str]:
                         }
                     }
                 }
+                if request_body:
+                    operation_obj["requestBody"] = request_body
+                openapi["paths"][path][method] = operation_obj
     def reinject_examples_in_description(openapi):
         for path, methods in openapi.get("paths", {}).items():
             for method, details in methods.items():
