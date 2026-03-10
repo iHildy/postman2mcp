@@ -1,6 +1,36 @@
 import json
+import re
 from urllib.parse import urlparse, parse_qs
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Any
+
+def slugify(text: str) -> str:
+    """Convert text to a valid operationId slug."""
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    return text.strip("_")
+
+def generate_schema_from_example(data: Any) -> Dict:
+    """Recursively generate an OpenAPI schema from an example data structure."""
+    if data is None:
+        return {"nullable": True}
+    if isinstance(data, bool):
+        return {"type": "boolean"}
+    if isinstance(data, int):
+        return {"type": "integer"}
+    if isinstance(data, float):
+        return {"type": "number"}
+    if isinstance(data, str):
+        return {"type": "string"}
+    if isinstance(data, list):
+        if not data:
+            return {"type": "array", "items": {}}
+        return {"type": "array", "items": generate_schema_from_example(data[0])}
+    if isinstance(data, dict):
+        properties = {}
+        for key, value in data.items():
+            properties[key] = generate_schema_from_example(value)
+        return {"type": "object", "properties": properties}
+    return {"type": "string"}
 
 def extract_query_parameters(url_obj: Dict) -> List[Dict]:
     return [
@@ -63,16 +93,17 @@ def extract_request_body(request: Dict) -> Dict:
         language = body_obj.get("options", {}).get("raw", {}).get("language", "json")
         media_type = f"application/{language}" if language == "json" else "text/plain"
         
-        # Simple schema, use the raw data as an example
+        schema = {"type": "string"}
         example = raw_data
         if language == "json":
             try:
                 example = json.loads(raw_data)
+                schema = generate_schema_from_example(example)
             except:
-                pass
+                schema = {"type": "object"}
         
         content[media_type] = {
-            "schema": {"type": "object"} if language == "json" else {"type": "string"},
+            "schema": schema,
             "example": example
         }
     elif mode == "urlencoded":
@@ -127,6 +158,16 @@ def extract_examples(responses: List[Dict]) -> Dict:
             param["key"]: param.get("value", "")
             for param in query_list if param.get("key")
         }
+        
+        # Check for body example in response originalRequest
+        body_obj = req.get("body", {})
+        if body_obj.get("mode") == "raw" and body_obj.get("raw"):
+            try:
+                body_val = json.loads(body_obj["raw"])
+                query_dict["request_body"] = body_val
+            except:
+                pass
+
         summary = resp.get("name", f"example_{i+1}")
         examples[f"example_{i+1}"] = {
             "summary": summary,
@@ -173,6 +214,8 @@ def convert_to_openapi(postman_collection) -> Tuple[dict, str]:
     }
 
     def process_items(items: List[Dict]):
+        used_operation_ids = set()
+        
         for item in items:
             if "item" in item:
                 process_items(item["item"])  # Recurse into folders
@@ -188,48 +231,77 @@ def convert_to_openapi(postman_collection) -> Tuple[dict, str]:
                 request_body = extract_request_body(request)
                 summary = item.get("name", f"{method.upper()} {path}")
                 description = request.get("description", "")
+                
+                op_id = slugify(summary)
+                base_op_id = op_id
+                counter = 1
+                while op_id in used_operation_ids:
+                    op_id = f"{base_op_id}_{counter}"
+                    counter += 1
+                used_operation_ids.add(op_id)
 
                 examples = extract_examples(item.get("response", []))
 
                 if path not in openapi["paths"]:
                     openapi["paths"][path] = {}
-                operation_obj = {
-                    "summary": summary,
-                    "description": description,
-                    "parameters": parameters,
-                    "responses": {
-                        "200": {
-                            "description": "Successful response",
-                            "content": {
-                                "application/json": {
-                                    "examples": examples or {
-                                        "default_example": {
-                                            "summary": summary,
-                                            "value": {}
-                                        }
-                                    }
-                                }
+                
+                responses_obj = {
+                    "200": {
+                        "description": "Successful response",
+                        "content": {
+                            "application/json": {
+                                "schema": {"type": "object"}
                             }
                         }
                     }
                 }
+                
+                if examples:
+                    responses_obj["200"]["content"]["application/json"]["examples"] = examples
+                    # Try to generate a more descriptive schema from the first example
+                    first_example_val = list(examples.values())[0].get("value")
+                    if first_example_val:
+                        responses_obj["200"]["content"]["application/json"]["schema"] = generate_schema_from_example(first_example_val)
+
+                operation_obj = {
+                    "operationId": op_id,
+                    "summary": summary,
+                    "responses": responses_obj
+                }
+                
+                if description:
+                    operation_obj["description"] = description
+
+                if parameters:
+                    operation_obj["parameters"] = parameters
+                
                 if request_body:
                     operation_obj["requestBody"] = request_body
+                
                 openapi["paths"][path][method] = operation_obj
     def reinject_examples_in_description(openapi):
         for path, methods in openapi.get("paths", {}).items():
             for method, details in methods.items():
                 desc = details.get("description", "")
                 responses = details.get("responses", {})
+                has_meaningful_examples = False
+                example_text = "\n\n---\n**Examples:**\n"
+                
                 for resp in responses.values():
                     content = resp.get("content", {})
                     for ctype in content.values():
                         examples = ctype.get("examples", {})
                         if examples:
-                            desc += "\n\n---\n**Examples:**\n"
                             for ex in examples.values():
-                                desc += f"- {ex.get('summary', '')}: `{ex.get('value', '')}`\n"
-                details["description"] = desc
+                                val = ex.get('value', {})
+                                if val and val != {}:
+                                    has_meaningful_examples = True
+                                    example_text += f"- {ex.get('summary', '')}: `{json.dumps(val)}`\n"
+                
+                if has_meaningful_examples:
+                    details["description"] = desc + example_text
+                else:
+                    details["description"] = desc
         return openapi
 
     process_items(postman["collection"]["item"])
